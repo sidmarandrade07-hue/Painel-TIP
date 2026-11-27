@@ -6,7 +6,8 @@
 <title>Painel TIP · Terminação Intensiva a Pasto</title>
 <!--
   =====================================================================
-  PAINEL TIP 2026 · versão 1.7 FINAL (24/11/2026) · Status começa em Ativo ao abrir · singular "1 animal"
+  PAINEL TIP 2026 · versão 1.8 (27/11/2026) · Comparar TIPs: + @ produzidas e eficiência biológica, − bags e @ por tonelada
+  v1.7 FINAL (24/11/2026) · Status começa em Ativo ao abrir · singular "1 animal"
   v1.6.1 (24/11): quantidade de animais nas barras + período de abate corrigido
   v1.6 (24/11): ajustes do gerente: premissas da projeção, dias de cocho reais,
   fora do padrão (> P_DiasMaxCocho), faixas novas, período de abate, comparar por safra, saldo da remessa
@@ -468,6 +469,7 @@ const ORDEM_IDADE = ['<20 m', '20–24 m', '24–30 m', '30–36 m', '≥36 m'];
 const ROT_IDADE = k => ({ '<20 m': 'abaixo de 20 meses', '20–24 m': '20 a 24 meses', '24–30 m': '24 a 30 meses', '30–36 m': '30 a 36 meses', '≥36 m': '36 meses ou mais' }[k] || k);
 const ORDEM_GORD = ['1', '2-', '2=', '2+', '3-', '3=', '3+'];
 /* v1.6: régua de cores da gordura (magra → ideal em verde → acima do ideal em âmbar) */
+const REND_ENT = .5;   /* v1.8: rendimento de carcaça na entrada (padrão de mercado para boi magro) */
 const COR_GORD = { '1': '#c9d3e3', '2-': '#9db3d1', '2=': '#86c79b', '2+': '#15803d', '3-': '#e3b866', '3=': '#c98a12', '3+': '#8a5a00' };
 /* espessura de gordura sobre o contrafilé, na penúltima costela (manual de classificação JBS; classes 1 a 5 = Portaria 612/MAPA) */
 const MM_GORD = { '1': 'ausente', '2-': '0 a 1 mm', '2=': '1 a 2 mm', '2+': '2 a 3 mm', '3-': '3 a 4 mm', '3=': '4 a 5 mm', '3+': '5 a 6 mm', '4': '7 a 10 mm', '5': '10 mm ou mais' };
@@ -926,8 +928,8 @@ function renderAbate() {
     ['Animais abatidos', nf(n), `${nf(new Set(A.map(a => a.lote)).size)} lotes de saída`],
     ['Peso de saída', `${nf(pv, 1)} <small>kg</small>`, `média do embarque (fazenda)${A.some(a => a.pv == null) ? ` · ${nf(A.filter(a => a.pv != null).length)} com peso de venda` : ''}`],
     ['Carcaça', `${nf(pa, 1)} <small>kg</small>`, `${nf(pa != null ? pa / 15 : null, 1)} @ por animal`],
-    ['Rendimento', pc(rd), 'carcaça ÷ peso de saída', 'verde'],
-    ['RC calha', pc(rc), `${nf(comRc.length)} animais com calha (${pc(n ? comRc.length / n : null)})`, '', rcErr ? tipT('RC calha', [`Média de ${nf(comRc.length)} animais com calha`, `<span class=ta>⚠️ ${nf(rcErr)} animais com RC acima de 65% ficaram fora (provável erro no peso da calha)</span>`]) : ''],
+    ['Rendimento', pc(rd), 'da fazenda · carcaça ÷ peso de saída', 'verde', tipT('Rendimento da fazenda', ['Carcaça (frigorífico) ÷ peso de saída na <b>balança da fazenda</b> (embarque)', `Média de ${nf(A.filter(a => a.rend != null).length)} animais abatidos`, 'Diferente do RC calha (balança do frigorífico), ao lado'])],
+    ['RC calha', pc(rc), `${nf(comRc.length)} animais com calha (${pc(n ? comRc.length / n : null)})`, '', tipT('RC calha · rendimento do frigorífico', ['Carcaça ÷ peso na <b>balança do frigorífico</b> (calha)', `Média de ${nf(comRc.length)} animais com calha`, 'Sai maior que o da fazenda porque o animal perde peso na viagem e no jejum', rcErr ? `<span class=ta>⚠️ ${nf(rcErr)} animais com RC acima de 65% ficaram fora (provável erro no peso da calha)</span>` : ''])],
     ['Idade ao abate', `${nf(im, 1)} <small>meses</small>`, idades.length ? `mín ${nf(Math.min(...idades), 1)} · máx ${nf(Math.max(...idades), 1)} meses` : '—'],
     ['Dias de cocho', `${nf(dcm)} <small>dias</small>`, umLote ? `${esc(umLote)} · ${nf(n)} animais em ${nf(embA)} embarque${embA > 1 ? 's' : ''}` : (dcs.length ? `mín ${nf(Math.min(...dcs))} · máx ${nf(Math.max(...dcs))} dias` : '—'), '',
       tipT('Dias de cocho dos abatidos', [`Média: <b>${nf(dcm)} dias</b> · ${nf(dcA.length)} animais abatidos`, 'Conta: data de venda − pesagem de entrada no trato, animal por animal (dias reais, não a data da LOTES)',
@@ -1603,6 +1605,13 @@ function renderTipsCore() {
     x.arr = x.pa != null ? x.pa / 15 : null; x.bags = x.kgAn != null ? x.kgAn / saco : null;
     x.conv = x.kgcd && x.gmd ? x.kgcd / x.gmd : null;                                   // kg de ração por kg de peso vivo ganho
     x.arrT = x.conv && x.rend ? 1000 / x.conv * x.rend / 15 : null;                     // @ de carcaça por tonelada de ração
+    /* v1.8: @ produzidas = (carcaça − peso de entrada × 50%) ÷ 15 · EB = kg de ração por @ produzida (por animal abatido) */
+    const gP = A.filter(a => a.tip === x.t && a.pa > 0 && a.pent > 0), arrP = a => (a.pa - a.pent * REND_ENT) / 15;
+    x.nArrP = gP.length; x.arrProdT = gP.length ? gP.reduce((s, a) => s + arrP(a), 0) : null; x.arrProdM = gP.length ? x.arrProdT / gP.length : null;
+    x.arrVendT = gP.length ? gP.reduce((s, a) => s + a.pa / 15, 0) : null;
+    const gE = gP.filter(a => a.dias > 0 && a.dias < 400 && !a.foraPad); x.nEb = gE.length;
+    x.ebDias = media(gE.map(a => a.dias)); x.ebArr = media(gE.map(arrP)); x.ebKg = x.kgcd && x.ebDias ? x.kgcd * x.ebDias : null;
+    x.eb = x.ebKg && x.ebArr > 0 ? x.ebKg / x.ebArr : null;
   });
   const marcaH = t => tipHistorica(t) ? 'histórico (planilha do gestor)' : tipAberta(t) ? 'em andamento' : 'fechada';
   const faltam = (x, nb, oque) => x.n > nb ? `<span class=ta>⚠️ ${nf(x.n - nb)} dos ${nf(x.n)} animais abatidos ficaram fora desta média (${oque})</span>` : '';
@@ -1625,8 +1634,8 @@ function renderTipsCore() {
     ['Peso de venda (kg)', 'pv', v => nf(v, 1), 'Média do peso de saída na balança da fazenda. Base: animais com peso de venda.', 'nPv'],
     ['Carcaça (kg)', 'pa', v => nf(v, 1), 'Média do peso de carcaça (tipificação ou digitado). Base: todos os animais com carcaça.', 'nPa'],
     ['@ por animal', 'arr', v => nf(v, 1), 'Carcaça ÷ 15.', 'nPa'],
-    ['Rendimento', 'rend', v => pc(v), 'Carcaça ÷ peso de saída (balança da fazenda). Base: animais com os dois pesos.', 'nRend'],
-    ['RC calha', 'rc', v => pc(v), 'Carcaça ÷ peso na balança do frigorífico. Só animais com calha lançada.', 'nRc'],
+    ['Rendimento', 'rend', v => pc(v), 'Rendimento da FAZENDA: carcaça ÷ peso de saída na balança da fazenda (embarque). Base: animais com os dois pesos.<br>Diferente do RC calha, que usa o peso na balança do frigorífico.', 'nRend'],
+    ['RC calha', 'rc', v => pc(v), 'Rendimento do FRIGORÍFICO: carcaça ÷ peso na balança do frigorífico (calha). Só animais com calha lançada.<br>Sai maior que o da fazenda porque o animal perde peso na viagem e no jejum.', 'nRc'],
     ['Gordura ideal (2= e 2+)', 'gid', v => pc(v), '% dos animais tipificados em 2= ou 2+. É o mesmo número do centro da rosca da aba Resultado de abate.', 'nGc'],
     ['Gordura 2 (2-, 2= e 2+)', 'g2', v => pc(v), '% dos animais tipificados em qualquer classe 2 (2-, 2= ou 2+).', 'nGc'],
     ['Idade ao abate (meses)', 'idade', v => nf(v, 1), 'Data de venda − nascimento. Base: animais com as duas datas.', 'nId'],
@@ -1635,16 +1644,18 @@ function renderTipsCore() {
     ['Ração da TIP (kg)', 'kg', v => nf(v), 'Ração total da TIP: lançada na base (real) e/ou estimada pelo SIGA.'],
     ['Consumo (kg/cab/dia)', 'kgcd', v => nf(v, 2), 'Ração da TIP ÷ animal-dias (1 animal comendo 1 dia).'],
     ['Ração por animal (kg)', 'kgAn', v => nf(v), 'Ração da TIP ÷ animais da TIP.'],
-    [`Bags por animal (bag de ${nf(saco)} kg)`, 'bags', v => nf(v, 2), 'Ração por animal ÷ peso da bag (PARAMETROS).'],
     ['Conversão alimentar (kg ração ÷ kg ganho)', 'conv', v => nf(v, 2), 'Consumo (kg/cab/dia) ÷ GMD. Quantos kg de ração para cada kg de peso ganho. Quanto menor, melhor.'],
-    ['@ produzidas por tonelada de ração', 'arrT', v => nf(v, 1), '(1.000 ÷ conversão) × rendimento ÷ 15. Quantas arrobas de carcaça cada tonelada de ração produziu. Quanto maior, melhor.'],
+    ['@ produzidas na TIP', 'arrProdT', v => nf(v), 'Arrobas que o trato colocou nos animais abatidos: soma de (carcaça − peso de entrada × 50%) ÷ 15.<br>@ de saída = carcaça pesada no frigorífico ÷ 15 (não usa rendimento da fazenda nem RC calha).<br>@ de entrada = peso de entrada (pesagem da fazenda) × 50% ÷ 15 (rendimento de entrada estimado).', 'nArrP',
+      x => [`Média: <b>${nf(x.arrProdM, 2)} @ produzidas por animal</b>`, `@ de saída: carcaça do frigorífico ÷ 15 = ${nf(x.arrVendT)} @ · ${nf(x.arrVendT && x.nArrP ? x.arrVendT / x.nArrP : null, 1)} @ por animal`, `@ de entrada: peso de entrada (pesagem da fazenda) × 50% ÷ 15 = ${nf(x.arrVendT != null ? x.arrVendT - x.arrProdT : null)} @`, '<span class=tn>Não usa o rendimento da fazenda nem o RC calha: a saída é a carcaça real; só a entrada é estimada (50%, padrão de mercado para boi magro)</span>']],
+    ['Eficiência biológica (kg de ração por @ produzida)', 'eb', v => nf(v, 1), 'Quantos kg de ração foram gastos para produzir 1 @: (consumo kg/cab/dia × dias de trato) ÷ @ produzidas por animal, nos animais abatidos. Quanto menor, melhor.<br>@ produzidas = (carcaça do frigorífico − peso de entrada da fazenda × 50%) ÷ 15 (não usa rendimento da fazenda nem RC calha).<br>Só a ração: o capim não entra (TIP a pasto), então não compare com a EB de confinamento.', 'nEb',
+      x => [`Conta: ${nf(x.kgcd, 2)} kg/cab/dia × ${nf(x.ebDias)} dias = <b>${nf(x.ebKg)} kg de ração</b> por animal ÷ <b>${nf(x.ebArr, 2)} @ produzidas</b>`, '@ produzidas: carcaça do frigorífico − peso de entrada da fazenda × 50%, ÷ 15', 'Quanto menor, melhor · sem os fora do padrão', tipHistorica(x.t) ? '<span class=ta>⚠️ ração estimada pelo SIGA nesta TIP</span>' : '', '<span class=tn>Só ração: o capim não entra (TIP a pasto)</span>']],
     ['Origem da ração', 'tipoR', v => v || '—', 'Real = lançado na LANCAR_TRATO · estimado = relatório do SIGA dividido por animal-dias.']
   ];
-  $('#tabComp').innerHTML = cab + '<tbody>' + linC.map(([r, c, fn, d, nb]) => `<tr><td data-tip="${tipT(esc(r), [d])}">${r}</td>` + ind.map(x => `<td ${nb ? `data-tip="${tipT(esc(x.t) + ' · ' + esc(r), [`${x[c] == null ? '—' : fn(x[c])}`, `Base: <b>${nf(x[nb])} animais abatidos</b>`, x.n > x[nb] && nb !== 'nRc' && nb !== 'nGc' ? `<span class=ta>⚠️ ${nf(x.n - x[nb])} dos ${nf(x.n)} abatidos sem o dado</span>` : ''])}"` : ''}>${x[c] == null ? '—' : fn(x[c])}</td>`).join('') + '</tr>').join('') + '</tbody>';
+  $('#tabComp').innerHTML = cab + '<tbody>' + linC.map(([r, c, fn, d, nb, ex]) => `<tr><td data-tip="${tipT(esc(r), [d])}">${r}</td>` + ind.map(x => `<td ${nb ? `data-tip="${tipT(esc(x.t) + ' · ' + esc(r), [`${x[c] == null ? '—' : fn(x[c])}`, ...(ex && x[c] != null ? ex(x) : []), `Base: <b>${nf(x[nb])} animais abatidos</b>`, x.n > x[nb] && nb !== 'nRc' && nb !== 'nGc' ? `<span class=ta>⚠️ ${nf(x.n - x[nb])} dos ${nf(x.n)} abatidos sem o dado</span>` : ''])}"` : ''}>${x[c] == null ? '—' : fn(x[c])}</td>`).join('') + '</tr>').join('') + '</tbody>';
   ligarTips($('#tabComp'));
   const filtrosTxt = [F.raca.size && 'raça', F.cat.size && 'categoria', periodo !== 'todos' && 'safra/período', F.lote.size && 'lote', F.status.size && 'status'].filter(Boolean);
   $('#csComp').textContent = 'Médias dos animais abatidos de cada TIP · passe o mouse no nome da linha ou no número' + (filtrosTxt.length ? ' · filtros aplicados: ' + filtrosTxt.join(', ') : '');
-  $('#notaComp').innerHTML = `Ração: TIPs 1 a 3 = estimativa do SIGA dividida por animal-dias (aba Racao_TIP); TIP 4 em diante = trato lançado na base${RACAO['TIP 4'] ? ' + estimativa do período antes de 12/08/2026' : ''}. A ração vale para a TIP inteira (não se divide por raça, categoria ou safra). Conversão = kg/cab/dia ÷ GMD no trato; @ por tonelada = (1.000 ÷ conversão) × rendimento ÷ 15 — nas TIPs 1 a 3 saem da ração estimada. "Em andamento" = TIP ainda aberta: os números mudam até ela fechar.`;
+  $('#notaComp').innerHTML = `Ração: TIPs 1 a 3 = estimativa do SIGA dividida por animal-dias (aba Racao_TIP); TIP 4 em diante = trato lançado na base${RACAO['TIP 4'] ? ' + estimativa do período antes de 12/08/2026' : ''}. A ração vale para a TIP inteira (não se divide por raça, categoria ou safra). Conversão = kg/cab/dia ÷ GMD no trato; @ produzidas = (carcaça − peso de entrada × 50%) ÷ 15; eficiência biológica = kg de ração por @ produzida (só ração, sem o capim) — nas TIPs 1 a 3 saem da ração estimada. "Em andamento" = TIP ainda aberta: os números mudam até ela fechar.`;
   ultimaTabelaTips = { cols: [['ind', 'Indicador'], ...marcadas.map(t => [t, t])], linhas: linC.map(([r, c]) => { const o = { ind: r }; ind.forEach(x => o[x.t] = x[c]); return o; }) };
 
   /* --- Barras por TIP (uma cor por TIP) com dica completa --- */
